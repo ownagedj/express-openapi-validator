@@ -103,12 +103,25 @@ export class RequestParameterMutator {
     });
   }
 
-  private handleDeepObject(req: Request, qs: string, name: string, schema: SchemaObject): void {
+  private handleDeepObject(
+    req: Request,
+    qs: string,
+    name: string,
+    schema: SchemaObject,
+  ): void {
     const getDefaultSchemaValue = () => {
       let defaultValue;
 
       if (schema.default !== undefined) {
-        defaultValue = schema.default
+        defaultValue = schema.default;
+      } else if (schema.properties) {
+        Object.entries(schema.properties).forEach(([k, v]) => {
+          // Handle recursive objects
+          defaultValue ??= {};
+          if (v['default']) {
+            defaultValue[k] = v['default'];
+          }
+        });
       } else {
         ['allOf', 'oneOf', 'anyOf'].forEach((key) => {
           if (schema[key]) {
@@ -116,9 +129,13 @@ export class RequestParameterMutator {
               if (s.$ref) {
                 const compiledSchema = this.ajv.getSchema(s.$ref);
                 // as any -> https://stackoverflow.com/a/23553128
-                defaultValue = defaultValue === undefined ? (compiledSchema.schema as any).default : defaultValue;
+                defaultValue =
+                  defaultValue === undefined
+                    ? (compiledSchema.schema as any).default
+                    : defaultValue;
               } else {
-                defaultValue = defaultValue === undefined ? s.default : defaultValue;
+                defaultValue =
+                  defaultValue === undefined ? s.default : defaultValue;
               }
             });
           }
@@ -237,6 +254,7 @@ export class RequestParameterMutator {
      */
     const field = REQUEST_FIELDS[$in];
     if (req[field]?.[name]) {
+      if (Array.isArray(req[field][name])) return;
       const value = req[field][name].split(delimiter);
       req[field][name] = value;
     }
@@ -315,9 +333,9 @@ export class RequestParameterMutator {
 
   private validateReservedCharacters(
     name: string,
-    pairs: { [key: string]: string[] },
+    pairs: Map<string, string[]>,
   ) {
-    const vs = pairs[name];
+    const vs = pairs.get(name);
     if (!vs) return;
     for (const v of vs) {
       if (v?.match(RESERVED_CHARS)) {
@@ -327,14 +345,14 @@ export class RequestParameterMutator {
     }
   }
 
-  private parseQueryStringUndecoded(qs: string) {
-    if (!qs) return {};
+  private parseQueryStringUndecoded(qs: string): Map<string, string[]> {
+    if (!qs) return new Map<string, string[]>();
     const q = qs.replace('?', '');
     return q.split('&').reduce((m, p) => {
       const [k, v] = p.split('=');
-      m[k] = m[k] ?? [];
-      m[k].push(v);
+      m.set(k, m.get(k) ?? []);
+      m.get(k)!.push(v);
       return m;
-    }, {});
+    }, new Map<string, string[]>());
   }
 }

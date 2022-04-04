@@ -52,7 +52,7 @@ export type ValidateRequestOpts = {
 export type ValidateResponseOpts = {
   removeAdditional?: boolean | 'all' | 'failing';
   coerceTypes?: boolean | 'array';
-  onError?: (err: InternalServerError, json: any) => void;
+  onError?: (err: InternalServerError, json: any, req: Request) => void;
 };
 
 export type ValidateSecurityOpts = {
@@ -72,6 +72,7 @@ export type Format = {
 
 export type SerDes = {
   format: string;
+  jsonType?: string;
   serialize?: (o: unknown) => string;
   deserialize?: (s: string) => unknown;
 };
@@ -80,24 +81,29 @@ export class SerDesSingleton implements SerDes {
   serializer: SerDes;
   deserializer: SerDes;
   format: string;
+  jsonType: string;
   serialize?: (o: unknown) => string;
   deserialize?: (s: string) => unknown;
 
   constructor(param: {
     format: string;
+    jsonType?: string;
     serialize: (o: unknown) => string;
     deserialize: (s: string) => unknown;
   }) {
     this.format = param.format;
+    this.jsonType = param.jsonType || 'object';
     this.serialize = param.serialize;
     this.deserialize = param.deserialize;
     this.deserializer = {
-      format : param.format,
-      deserialize : param.deserialize
+      format: param.format,
+      jsonType: param.jsonType || 'object',
+      deserialize: param.deserialize
     }
     this.serializer = {
-      format : param.format,
-      serialize : param.serialize
+      format: param.format,
+      jsonType: param.jsonType || 'object',
+      serialize: param.serialize
     }
   }
 };
@@ -113,6 +119,7 @@ export interface OpenApiValidatorOpts {
   validateRequests?: boolean | ValidateRequestOpts;
   validateSecurity?: boolean | ValidateSecurityOpts;
   ignorePaths?: RegExp | Function;
+  ignoreUndocumented?: boolean;
   securityHandlers?: SecurityHandlers;
   coerceTypes?: boolean | 'array';
   unknownFormats?: true | string[] | 'ignore';
@@ -533,17 +540,23 @@ export interface ValidationErrorItem {
   error_code?: string;
 }
 
+interface ErrorHeaders {
+  Allow?: string;
+}
+
 export class HttpError extends Error implements ValidationError {
   status!: number;
-  message!: string;
-  errors!: ValidationErrorItem[];
   path?: string;
   name!: string;
+  message!: string;
+  headers?: ErrorHeaders;
+  errors!: ValidationErrorItem[];
   constructor(err: {
     status: number;
     path: string;
     name: string;
     message?: string;
+    headers?: ErrorHeaders;
     errors?: ValidationErrorItem[];
   }) {
     super(err.name);
@@ -551,15 +564,13 @@ export class HttpError extends Error implements ValidationError {
     this.status = err.status;
     this.path = err.path;
     this.message = err.message;
-    this.errors =
-      err.errors == undefined
-        ? [
-            {
-              path: err.path,
-              message: err.message,
-            },
-          ]
-        : err.errors;
+    this.headers = err.headers;
+    this.errors = err.errors ?? [
+      {
+        path: err.path,
+        message: err.message,
+      },
+    ];
   }
 
   public static create(err: {
@@ -634,6 +645,7 @@ export class MethodNotAllowed extends HttpError {
   constructor(err: {
     path: string;
     message?: string;
+    headers?: ErrorHeaders;
     overrideStatus?: number;
   }) {
     super({
@@ -641,6 +653,7 @@ export class MethodNotAllowed extends HttpError {
       path: err.path,
       name: 'Method Not Allowed',
       message: err.message,
+      headers: err.headers,
     });
   }
 }

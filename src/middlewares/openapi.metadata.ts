@@ -3,6 +3,7 @@ import { pathToRegexp } from 'path-to-regexp';
 import { Response, NextFunction } from 'express';
 import { OpenApiContext } from '../framework/openapi.context';
 import {
+  BadRequest,
   MethodNotAllowed,
   NotFound,
   OpenApiRequest,
@@ -10,6 +11,7 @@ import {
   OpenApiRequestMetadata,
   OpenAPIV3,
 } from '../framework/types';
+import { httpMethods } from './parsers/schema.preprocessor';
 
 export function applyOpenApiMetadata(
   openApiContext: OpenApiContext,
@@ -27,9 +29,18 @@ export function applyOpenApiMetadata(
     if (matched) {
       const { expressRoute, openApiRoute, pathParams, schema } = matched;
       if (!schema) {
+        // Prevents validation for routes which match on path but mismatch on method
+        if(openApiContext.ignoreUndocumented) {
+          return next();
+        }
         throw new MethodNotAllowed({
           path: req.path,
           message: `${req.method} method not allowed`,
+          headers: {
+            Allow: Object.keys(openApiContext.openApiRouteMap[openApiRoute])
+              .filter((key) => httpMethods.has(key.toLowerCase()))
+              .join(', '),
+          },
         });
       }
       req.openapi = {
@@ -43,7 +54,7 @@ export function applyOpenApiMetadata(
         // add the response schema if validating responses
         (<any>req.openapi)._responseSchema = (<any>matched)._responseSchema;
       }
-    } else if (openApiContext.isManagedRoute(path)) {
+    } else if (openApiContext.isManagedRoute(path) && !openApiContext.ignoreUndocumented) {
       throw new NotFound({
         path: req.path,
         message: 'not found',
@@ -75,17 +86,24 @@ export function applyOpenApiMetadata(
 
       if (matchedRoute) {
         const paramKeys = keys.map((k) => k.name);
-        const paramsVals = matchedRoute.slice(1).map(decodeURIComponent);
-        const pathParams = _zipObject(paramKeys, paramsVals);
+        try {
+          const paramsVals = matchedRoute.slice(1).map(decodeURIComponent);
+          const pathParams = _zipObject(paramKeys, paramsVals);
 
-        const r = {
-          schema,
-          expressRoute,
-          openApiRoute,
-          pathParams,
-        };
-        (<any>r)._responseSchema = _schema;
-        return r;
+          const r = {
+            schema,
+            expressRoute,
+            openApiRoute,
+            pathParams,
+          };
+          (<any>r)._responseSchema = _schema;
+          return r;
+        } catch (error) {
+          throw new BadRequest({
+            path: req.path,
+            message: `malformed uri'`,
+          });
+        }
       }
     }
 
