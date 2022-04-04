@@ -61,7 +61,7 @@ if (!Array.prototype['flatMap']) {
   };
   Object.defineProperty(Array.prototype, 'flatMap', { enumerable: false });
 }
-const httpMethods = new Set([
+export const httpMethods = new Set([
   'get',
   'put',
   'post',
@@ -315,10 +315,15 @@ export class SchemaPreprocessor {
 
       if (options.length > 0) {
         const newSchema = JSON.parse(JSON.stringify(schemaObj));
-        newSchema.properties = {
+
+        const newProperties = {
           ...(o.properties ?? {}),
           ...(newSchema.properties ?? {}),
         };
+        if(Object.keys(newProperties).length > 0) {
+          newSchema.properties = newProperties;
+        }
+
         newSchema.required = o.required;
         if (newSchema.required.length === 0) {
           delete newSchema.required;
@@ -331,9 +336,8 @@ export class SchemaPreprocessor {
         };
 
         for (const option of options) {
-          ancestor._discriminator.validators[option] = this.ajv.compile(
-            newSchema,
-          );
+          ancestor._discriminator.validators[option] =
+            this.ajv.compile(newSchema);
         }
       }
       //reset data
@@ -352,7 +356,7 @@ export class SchemaPreprocessor {
       !!schema.format &&
       this.serDesMap[schema.format]
     ) {
-      (<any>schema).type = ['object', 'string'];
+      (<any>schema).type = [this.serDesMap[schema.format].jsonType || 'object', 'string'];
       schema['x-eov-serdes'] = this.serDesMap[schema.format];
     }
   }
@@ -477,8 +481,19 @@ export class SchemaPreprocessor {
     if (v === parameters) return;
     v.parameters = v.parameters || [];
 
+    const match = (
+      pathParam: OpenAPIV3.ReferenceObject | OpenAPIV3.ParameterObject,
+      opParam: OpenAPIV3.ReferenceObject | OpenAPIV3.OperationObject,
+    ) =>
+      // if name or ref exists and are equal
+      (opParam['name'] && opParam['name'] === pathParam['name']) ||
+      (opParam['$ref'] && opParam['$ref'] === pathParam['$ref']);
+
+    // Add Path level query param to list ONLY if there is not already an operation-level query param by the same name.
     for (const param of parameters) {
-      v.parameters.push(param);
+      if (!v.parameters.some((vparam) => match(param, vparam))) {
+        v.parameters.push(param);
+      }
     }
   }
 

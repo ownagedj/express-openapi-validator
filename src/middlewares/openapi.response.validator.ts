@@ -80,7 +80,7 @@ export class ResponseValidator {
         } catch (err) {
           // If a custom error handler was provided, we call that
           if (err instanceof InternalServerError && this.eovOptions.onError) {
-            this.eovOptions.onError(err, body)
+            this.eovOptions.onError(err, body, req)
           } else {
             // No custom error handler, or something unexpected happen.
             throw err;
@@ -143,6 +143,19 @@ export class ResponseValidator {
     const contentType =
       findResponseContent(accepts, validatorContentTypes) ||
       validatorContentTypes[0]; // take first contentType, if none found
+
+    if (validatorContentTypes.length === 0) {
+      // spec specifies no content for this response
+      if (body !== undefined) {
+        // response contains content/body
+        throw new InternalServerError({
+          path: '.response',
+          message: 'response should NOT have a body',
+        });
+      }
+      // response contains no content/body so OK
+      return;
+    }
 
     if (!contentType) {
       // not contentType inferred, assume valid
@@ -275,6 +288,9 @@ export class ResponseValidator {
 
     const validators = {};
     for (const [code, contentTypeSchemas] of Object.entries(responseSchemas)) {
+      if (Object.keys(contentTypeSchemas).length === 0) {
+          validators[code] = {};
+      }
       for (const contentType of Object.keys(contentTypeSchemas)) {
         const schema = contentTypeSchemas[contentType];
         schema.paths = this.spec.paths; // add paths for resolution with multi-file
